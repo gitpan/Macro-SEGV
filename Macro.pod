@@ -1,0 +1,396 @@
+# -*- cperl -*-
+# $Source: /usr/cvsroot/ConveyPerl/lib/Macro.pod,v $
+# $Id: Macro.pod,v 1.1 2002/02/14 11:03:24 marco Exp $
+# COPYRIGHT (C) 2002 Edward Marco Baringer
+
+=head1 NAME
+
+Macro - Simple code templating mechnism
+
+=head1 SYNOPSIS
+
+  use Macro;
+
+  macro { 'aif' <perl_codeblock:()> }
+        { my ($condition) = @_;
+          return "if (my \$it = ($condition)) "; }
+
+  aif (func()) {
+    print "$it is true\n";
+  } else {
+    print "$it is false\n";
+  }
+
+
+=head1 DESCRIPTION
+
+C<Macro> defines perl functions which transform perl source code. It
+allows you to specify a template of perl code and whenever source doce
+is encountered which matches that template is is substituted with the
+output of a function.
+
+Writing macros is fundamentally different from writing functions,
+because while functions operate on I<data>, macros operate on
+I<code>. While a function is passed it's arguments a macro is passed
+the i<expressions> (code) which defines the arguments. This allows you
+to do really new things (program the programming language) but also
+really mess things up. It's a laser scalpal, do not point at eyes.
+
+=head2 Using C<Macro>
+
+Every macro consists of two parts, a template and an expander. The
+template specifies what to transform and the expander specifies how to
+transform it.
+
+=head2 The Template
+
+The tempalte defines what piece of perl code should be transformed. It
+can consist of literal tokens, regexps, directives or builtin tokens.
+
+=over
+
+=item literal tokens
+
+A string enclosed in double or single quotes. matches itself.
+
+=item regexps
+
+A regular expression. Note that it is not nessecary to paren group
+anything, the entire match will I<always> be returned, whether you
+like it or not.
+
+=item directives
+
+An instruction to the parser. all of the directives in
+Parse::RecDescent are available, but these are the most usefull:
+
+=over
+
+=item <perl_codeblock>
+
+=item <perl_variable>
+
+=item <perl_quotelike>
+
+=back
+
+=item builtin tokens
+
+Certain unquoted and un <> bracketed words can appear in the
+template. These are really just Parse::RecDescent rules, but you don't
+need to know that if you don't want.
+
+=over
+
+=item arg_list
+
+A comma seperated list "things". "Things" could be better described as
+quoted and quote like strings:
+
+=over
+
+=item regexps
+
+=item "stuff like this"
+
+=item 'stuff like this as well'
+
+=item s/i want/more/sex
+
+(sorry, i couldn't help myself)
+
+=back
+
+The expander function will be passed an C<ARRAY> ref containing
+everything matched. Note that I<no> processing is doen on the matches,
+so if "hello" was one of the args then '"hello"' (not the quotes) will
+be one of the elements of the C<ARRAY> ref.
+
+You can pass parameters to the arg_list token in order to specify what
+characters should be used for what. The first arg specifies the
+character to use to divide the args, the second sepcifies the opening
+character and the third specifies the closing character (if the third
+is not present it default's to the second paramter). Args are passed
+enclosed in '[' and ']' and comma seperated (this is just the rules
+C<Parse::RecDescent> uses for passing args to rules).
+
+This will give you C<arg_list>'s default behaviour:
+
+  arg_list[",","(",")"]
+
+If you're a curly kindof guy:
+
+  arg_list["~","{","}"]
+
+This will excpet an arg list to look like:
+
+  { "foo" ~ "bar" ~ $x }
+
+Just don't use '/' as a opening delimiter or closing delimiter as that
+will make it look like a regexp and the macro won't match (don't ask
+why).
+
+B<Experimental>
+
+Opening and closing can be regexps and not just chars, however this is
+farily new and untested. Besides, you have to remove the quotemeta
+call which opens up a whole other can or worms.
+
+=item function_name
+
+a short hand for /[A-Za-z_][A-Za-z0-9_]*/
+
+=back
+
+=item integer
+
+short hand for /[-+]?\d+/
+
+=item real
+
+short hand for /-?\d+\.?\d*/
+
+=back
+
+If you want to add your own builtin tokens you can append the rules
+(read Parse::RecDescent and see the definition of
+Macro::standard_rules to figure out how) to the global variable
+$Macro::standard_rules. The better thing would be to send them to me
+so i (and others, of course) can have them.
+
+=head2 The Expander
+
+The expander consists of regular perl code (it can be viewed as a sub
+minus the sub keyword) whose return value is perl code. The arguments
+to the generator code are the code pieces "captured" by the parameter
+directives in the template.
+
+=over
+
+=item generator arguments
+
+If our template is:
+
+  'aif' <perl_codeblock:()>
+
+And the perl code is
+
+  aif (func()) { ....
+
+Then the generator code's C<@_> var will look like:
+
+  ( 'aif', '(func())' )
+
+=back
+
+=head1 Cool Macros (or Why You Want To Use Macros Too)
+
+These are mainly just ideas of mine...
+
+=over
+
+=item Local/Inner functions
+
+While this can be done with C<local *f = sub { };> this is yet another
+way to do it.
+
+=over
+
+=item macro
+
+  macro { 'my' 'sub' function_name <perl_codeblock> }
+        { 'local *' . $_[2] . ' = sub {' . $_[3] . '};' }
+
+=item use
+
+  my sub func { 5 }; 
+  func();
+
+=item note
+
+Since this uses local, any called functions will see the new value
+of the function, in other words, this is a dynamic and not lexical
+scoped function
+
+=back
+
+=item class accessor (getter/setter) definer
+
+As opposed to doing funky tricks with C<AUTOLOAD> and, in so doing,
+hiding what's really going on just to save typing, this macro will
+save even more typing than using C<AUTOLOAD> (unless you have a I<lot> of
+attributes) and is, in my opinion, more expressive.
+
+=over
+
+=item macro
+
+  macro { 'accessor' function_name }
+        { 'sub ' . $_[1] . ' {
+             my $self = shift;
+             if (@_) {
+               $self->{' . $_[1] '} = $_[0]
+             }
+             return @_ ? $self : $self->{' . $_[1] .'};
+         }'
+       }
+
+=item use
+
+  accessor name;
+  accessor age;
+
+=back
+
+=item Anamorphic if
+
+The idea for this is taken from Paul Graham's "On Lisp".
+
+Whenever you have an if statement and the clauses need to be able to
+access the value returned by the condition, this macro will create a
+new variable (C<$it>) which holds that value
+
+=over
+
+=item macro
+
+  macro { 'aif' <perl_codeblock:()> }
+        { 'if (my $it = ' . $_[2] . ') ' }
+
+=item use
+
+  aif (func()) {
+    print "the call to func returned a true value\n";
+    print "in particular: $it\n";
+  }
+
+=back
+
+=item Temporary values
+
+Whenever you need to mess with a value and when you're done you want
+to the old value to be put back. The if statement is necessary because
+we can't have lexical globs, perl isn't a I<pure> dynmaically typed
+language, oh well.
+
+=over
+
+=item macro
+
+  macro { 'local-value' <perl_variable> <perl_codeblock> }
+        { my ($var, $code) = @_[2,3]; 
+          my $saved_var = sprintf("__%09d__",
+                          int(rand() * 1000000000));
+          if ($var =~ /^@/) {
+            $saved_var = '@' . $saved_var;
+          } elsif ($var =~ /^%/) {
+            $saved_var = '%' . $saved_var;
+          } else {
+            $saved_var = '$' . $saved_var;
+          }
+          # notice that we don't backquote I<any> of these
+          # vars
+          return " { my $saved_var = $var;
+                     $code;
+                     $var = $saved_var} "
+        }
+
+=item use
+
+  my $a = 5;
+  print "a is $a\n";
+  local-value $a {
+     $a = 6;
+     print "a is $a\n";
+  }
+  print "a is $a\n";
+
+=back
+
+=item Continuations
+
+See Continuations.pm (not that it exists yet...)
+
+=back
+
+=head1 BUGS
+
+=over
+
+=item Speed
+
+It's horendously slow...
+
+Suggestion: Instead of gnerating a grammar for every macro, you should
+generate a single grammar which can expand all macros, might help, who
+knows? However, what about macros which expand into macro definitions?
+agreed that we need to do some kind of optimizations, but how can we
+avoid calling Parse::RecDescent->new and still keep the flexibilty of
+macro which define macros? maybe this is someting we should compromies
+on?
+
+=item Inclusion
+
+Every macro used by a file has to been defined in that file, there is
+currently no way to include macro definitions from other files. Well,
+there is i just haven't documented how yet.
+
+=back
+
+=head1 ISSUES
+
+The real solution would be to be able to interact with the perl's
+evaluator. When perl sees a function (or keyword) which happens to
+have the macro attribute that function should be called immediatly and
+it's return value read in. I<(*cough* lisp *cough*)>
+
+=head2 Filter::Simple
+
+In writing this code it would have been convient if C<Fitler::Simple>
+would allow me to select the parts of source code i want to work on
+(code, regexp, quotes) while at the same time allowing me to
+conviently see the actual, unmodified original code.
+
+So C<Filter::Simple> was modified. A function C<Filter::Simple::show>
+was added (it only exists while the transformation code is running)
+which reinserts whatever had been pulled out.
+
+At the moment this function is inserted in C<Fitler::Simple>'s call
+space, should it be put in the caller's call space?
+
+=head2 Parse::RecDescent
+
+=over
+
+=item *
+
+It it ocasionally useful to specify, vie the C<perl_codeblock>
+directrive, what pair of chars you want to use as delimiters, you can
+do that now. Ceveat (sp?): if you want to extract '<>' delimited do
+
+  <perl_codeblock:<>
+
+it's a dirty hack, but it works (and since all of my modifications to
+perl_codeblock were dirty hacks this didn't hurt too much)
+
+=item *
+
+Autogenerated actions are used a lot, so we needed a way to turn of
+the warnings. using the global C<$::AUTO_ACTION_NOWARN> we can now
+silence these warnings.
+
+=back
+
+=head1 AUTHOR
+
+Edward Marco Baringer <e.baringer@studenti.to.it>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2002, Edward Marco Baringer. All Rights Reserved.
+This module is free software. It may be used, redistributed
+and/or modified under the terms of the Perl Artistic License
+(see http://www.perl.com/perl/misc/Artistic.html)
+
+=cut
+
